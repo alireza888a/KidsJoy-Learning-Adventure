@@ -25,7 +25,7 @@ export enum GameType {
 }
 
 export interface GameState {
-  view: 'main' | 'learning_detail' | 'game_types' | 'game_cats' | 'game_active';
+  view: 'main' | 'learning_detail' | 'game_types' | 'game_cats' | 'game_active' | 'alphabet';
   selectedCategory: Category | null;
   selectedGame: GameType | null;
   score: number;

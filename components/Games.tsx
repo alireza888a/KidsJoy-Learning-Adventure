@@ -55,11 +55,14 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   const getRandomItems = (count: number, excludeId?: string) => {
     let pool = [...category.items];
     if (excludeId) pool = pool.filter(i => i.id !== excludeId);
-    return pool.sort(() => Math.random() - 0.5).slice(0, count);
+    return pool.sort(() => Math.random() - 0.5).slice(0, Math.min(count, pool.length));
   };
 
   const initGame = () => {
-    const current = category.items[currentIndex] || category.items[0];
+    if (!category.items || category.items.length === 0) return;
+    const safeIndex = Math.min(currentIndex, category.items.length - 1);
+    const current = category.items[safeIndex] || category.items[0];
+    if (!current) return;
 
     if (gameType === GameType.FLASHCARDS) {
       updateFunFact(current.name);
@@ -144,6 +147,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
 
   // Render Helpers
   const renderItemVisual = (item: Item, className: string = "text-6xl") => {
+    if (!item) return null;
     const img = getCachedImage(item.id);
     if (img) {
       return <img src={img} alt={item.name} className="w-full h-full object-contain rounded-2xl" />;
@@ -151,44 +155,52 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
     return <span className={className}>{item.emoji}</span>;
   };
 
-  const renderFlashcards = () => (
-    <div className="flex flex-col items-center justify-center space-y-5 animate-in zoom-in duration-300">
-      <div className="w-full aspect-square bg-[#6366F1] rounded-[3rem] shadow-card flex flex-col items-center justify-center p-6 relative overflow-hidden">
-          <div className="w-4/5 h-4/5 flex items-center justify-center">
-            {renderItemVisual(category.items[currentIndex], "text-[8rem]")}
-          </div>
-          <h2 className="text-3xl font-kids text-white capitalize mt-2">{category.items[currentIndex].name}</h2>
-          <button onClick={() => handleSpeech(category.items[currentIndex].name)} className={`absolute top-5 right-5 bg-white/20 p-2.5 rounded-full text-white text-lg z-10 ${isSpeaking ? 'animate-pulse' : ''}`}>🔊</button>
+  const renderFlashcards = () => {
+    const item = category.items[currentIndex] || category.items[0];
+    if (!item) return null;
+    return (
+      <div className="flex flex-col items-center justify-center space-y-5 animate-in zoom-in duration-300">
+        <div className="w-full aspect-square bg-[#6366F1] rounded-[3rem] shadow-card flex flex-col items-center justify-center p-6 relative overflow-hidden">
+            <div className="w-4/5 h-4/5 flex items-center justify-center">
+              {renderItemVisual(item, "text-[8rem]")}
+            </div>
+            <h2 className="text-3xl font-kids text-white capitalize mt-2">{item.name}</h2>
+            <button onClick={() => handleSpeech(item.name)} className={`absolute top-5 right-5 bg-white/20 p-2.5 rounded-full text-white text-lg z-10 ${isSpeaking ? 'animate-pulse' : ''}`}>🔊</button>
+        </div>
+        <div className="bg-indigo-50 p-5 rounded-[2rem] w-full text-center border-2 border-indigo-100">
+           <p className="text-sm text-indigo-900 font-bold italic leading-relaxed">"{funFact || 'Thinking...'}"</p>
+           <div className="mt-2 text-pink-500 font-bold text-lg" dir="rtl">{item.persianName}</div>
+        </div>
+        <button onClick={handleNext} className="w-full bg-[#FFD233] text-white py-4 rounded-[1.5rem] text-lg font-kids shadow-lg uppercase active:scale-95 transition-all">NEXT WORD ➜</button>
       </div>
-      <div className="bg-indigo-50 p-5 rounded-[2rem] w-full text-center border-2 border-indigo-100">
-         <p className="text-sm text-indigo-900 font-bold italic leading-relaxed">"{funFact || 'Thinking...'}"</p>
-         <div className="mt-2 text-pink-500 font-bold text-lg" dir="rtl">{category.items[currentIndex].persianName}</div>
-      </div>
-      <button onClick={handleNext} className="w-full bg-[#FFD233] text-white py-4 rounded-[1.5rem] text-lg font-kids shadow-lg uppercase active:scale-95 transition-all">NEXT WORD ➜</button>
-    </div>
-  );
+    );
+  };
 
-  const renderQuiz = () => (
-    <div className="flex flex-col items-center space-y-6 animate-in slide-in-from-bottom duration-300">
-      <div className="text-center">
-        <h3 className="text-xl font-kids text-indigo-800">Where is the <span className="text-pink-500 underline">{category.items[currentIndex].name}</span>?</h3>
+  const renderQuiz = () => {
+    const item = category.items[currentIndex] || category.items[0];
+    if (!item) return null;
+    return (
+      <div className="flex flex-col items-center space-y-6 animate-in slide-in-from-bottom duration-300">
+        <div className="text-center">
+          <h3 className="text-xl font-kids text-indigo-800">Where is the <span className="text-pink-500 underline">{item.name}</span>?</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-3 w-full">
+          {shuffledOptions.map((opt, i) => (
+            <button 
+              key={i} 
+              onClick={() => {
+                  if (opt.id === item.id) celebrate();
+                  else fail();
+              }}
+              className={`aspect-square flex items-center justify-center p-4 rounded-[2.5rem] bg-white shadow-soft border-4 transition-all overflow-hidden ${isCorrect === true && opt.id === item.id ? 'border-green-400 bg-green-50' : 'border-gray-50 active:scale-90 active:border-indigo-200'}`}
+            >
+              {renderItemVisual(opt)}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 w-full">
-        {shuffledOptions.map((opt, i) => (
-          <button 
-            key={i} 
-            onClick={() => {
-                if (opt.id === category.items[currentIndex].id) celebrate();
-                else fail();
-            }}
-            className={`aspect-square flex items-center justify-center p-4 rounded-[2.5rem] bg-white shadow-soft border-4 transition-all overflow-hidden ${isCorrect === true && opt.id === category.items[currentIndex].id ? 'border-green-400 bg-green-50' : 'border-gray-50 active:scale-90 active:border-indigo-200'}`}
-          >
-            {renderItemVisual(opt)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderMemory = () => (
     <div className="flex flex-col items-center space-y-6 animate-in fade-in duration-500">
@@ -266,36 +278,48 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
     </div>
   );
 
-  const renderSpelling = () => (
-    <div className="flex flex-col items-center space-y-8 animate-in zoom-in duration-300 w-full max-w-sm">
-      <div className="w-48 h-48 p-8 bg-white rounded-[3rem] shadow-card flex items-center justify-center overflow-hidden">
-        {renderItemVisual(category.items[currentIndex], "text-[7rem]")}
+  const renderSpelling = () => {
+    const item = category.items[currentIndex] || category.items[0];
+    if (!item) return null;
+    return (
+      <div className="flex flex-col items-center space-y-8 animate-in zoom-in duration-300 w-full max-w-sm">
+        <div className="w-48 h-48 p-8 bg-white rounded-[3rem] shadow-card flex items-center justify-center overflow-hidden">
+          {renderItemVisual(item, "text-[7rem]")}
+        </div>
+        <div className={`flex flex-wrap justify-center gap-2 min-h-[70px] w-full border-b-8 border-dashed ${spellingStatus === 'error' ? 'border-red-200' : spellingStatus === 'correct' ? 'border-green-200' : 'border-indigo-100'} pb-6 transition-colors duration-300`}>
+          {item.name.toUpperCase().split('').map((char, i) => {
+            const isFilled = userSpelling.length > i;
+            return (
+              <div key={i} className={`w-10 h-12 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg transition-all transform ${isFilled ? 'scale-110' : 'scale-100'} ${spellingStatus === 'correct' ? 'bg-green-500 text-white animate-bounce' : spellingStatus === 'error' && isFilled ? 'bg-red-500 text-white animate-pulse' : isFilled ? 'bg-[#6366F1] text-white' : 'bg-white border-2 border-gray-100 text-transparent'}`}>{isFilled ? userSpelling[i] : ''}</div>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap justify-center gap-3 px-4">
+          {spellingLetters.map((char, i) => (
+            <button key={i} onClick={() => {
+              const nextUserSpelling = [...userSpelling, char];
+              const target = item.name.toUpperCase();
+              if (target.startsWith(nextUserSpelling.join(''))) {
+                setUserSpelling(nextUserSpelling);
+                if (nextUserSpelling.join('') === target) { 
+                  setSpellingStatus('correct'); 
+                  handleSpeech(item.name); 
+                  setScore(s => s + 20); 
+                  setTimeout(handleNext, 2000); 
+                }
+              } else { 
+                setSpellingStatus('error'); 
+                setTimeout(() => { setUserSpelling([]); setSpellingStatus('neutral'); }, 800); 
+              }
+            }}
+            className={`w-12 h-14 bg-white rounded-xl shadow-soft border-b-4 border-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xl animate-float`}
+            style={{ animationDelay: `${i * 0.1}s` }}>{char}</button>
+          ))}
+        </div>
+        <style>{`@keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } } .animate-float { animation: float 3s infinite ease-in-out; }`}</style>
       </div>
-      <div className={`flex flex-wrap justify-center gap-2 min-h-[70px] w-full border-b-8 border-dashed ${spellingStatus === 'error' ? 'border-red-200' : spellingStatus === 'correct' ? 'border-green-200' : 'border-indigo-100'} pb-6 transition-colors duration-300`}>
-        {category.items[currentIndex].name.toUpperCase().split('').map((char, i) => {
-          const isFilled = userSpelling.length > i;
-          return (
-            <div key={i} className={`w-10 h-12 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg transition-all transform ${isFilled ? 'scale-110' : 'scale-100'} ${spellingStatus === 'correct' ? 'bg-green-500 text-white animate-bounce' : spellingStatus === 'error' && isFilled ? 'bg-red-500 text-white animate-pulse' : isFilled ? 'bg-[#6366F1] text-white' : 'bg-white border-2 border-gray-100 text-transparent'}`}>{isFilled ? userSpelling[i] : ''}</div>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap justify-center gap-3 px-4">
-        {spellingLetters.map((char, i) => (
-          <button key={i} onClick={() => {
-            const nextUserSpelling = [...userSpelling, char];
-            const target = category.items[currentIndex].name.toUpperCase();
-            if (target.startsWith(nextUserSpelling.join(''))) {
-              setUserSpelling(nextUserSpelling);
-              if (nextUserSpelling.join('') === target) { setSpellingStatus('correct'); handleSpeech(category.items[currentIndex].name); setScore(s => s + 20); setTimeout(handleNext, 2000); }
-            } else { setSpellingStatus('error'); setTimeout(() => { setUserSpelling([]); setSpellingStatus('neutral'); }, 800); }
-          }}
-          className={`w-12 h-14 bg-white rounded-xl shadow-soft border-b-4 border-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xl animate-float`}
-          style={{ animationDelay: `${i * 0.1}s` }}>{char}</button>
-        ))}
-      </div>
-      <style>{`@keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } } .animate-float { animation: float 3s infinite ease-in-out; }`}</style>
-    </div>
-  );
+    );
+  };
 
   const renderOddOneOut = () => (
     <div className="flex flex-col items-center space-y-6 animate-in slide-in-from-right duration-300">
