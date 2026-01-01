@@ -20,14 +20,19 @@
         }
         body {
             font-family: 'Outfit', sans-serif;
-            overflow: hidden;
             background-color: #FDFDFD;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
-            /* Prevents bouncing on iOS */
+            /* Prevents bouncing on iOS and keeps app fixed */
             position: fixed;
             width: 100%;
             height: 100%;
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+        #root {
+            height: 100%;
+            width: 100%;
         }
         .font-kids {
             font-family: 'Fredoka', cursive;
@@ -43,17 +48,23 @@
             background-image: radial-gradient(#e5e7eb 0.5px, transparent 0.5px);
             background-size: 24px 24px;
         }
-        /* Custom scrollbar for category row */
+        /* Custom scrollbar handling */
         .hide-scrollbar::-webkit-scrollbar {
             display: none;
         }
         .hide-scrollbar {
             -ms-overflow-style: none;
             scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
         }
         /* Native-like active states */
         .active-scale:active {
             transform: scale(0.95);
+        }
+        /* Fix for scrollable areas in fixed containers */
+        .scroll-container {
+            overflow-y: auto;
+            overscroll-behavior-y: contain;
         }
     </style>
 <script type="importmap">

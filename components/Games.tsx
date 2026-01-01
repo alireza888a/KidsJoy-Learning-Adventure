@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Category, Item, GameType } from '../types';
 import { getFunFact, generateSpeech } from '../services/geminiService';
 import { playTTSSound, playLocalSpeech } from '../services/audioPlayer';
 import { CATEGORIES } from '../constants';
+import { imageStorage } from '../services/storage';
 
 interface GameProps {
   category: Category;
@@ -18,6 +19,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [shuffledOptions, setShuffledOptions] = useState<Item[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
 
   // State for game-specific data
   const [memoryCards, setMemoryCards] = useState<any[]>([]);
@@ -31,8 +33,23 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   const [spellingStatus, setSpellingStatus] = useState<'neutral' | 'correct' | 'error'>('neutral');
   const [oddOneItems, setOddOneItems] = useState<(Item & {isOdd: boolean})[]>([]);
 
-  // Helper to get cached image
-  const getCachedImage = (id: string) => localStorage.getItem(`kids_joy_img_${id}`);
+  // Load all required images into local state cache for this category
+  useEffect(() => {
+    const loadImages = async () => {
+      const allItems = [...category.items];
+      // Also potentially load odd items if needed
+      const results = await Promise.all(
+        allItems.map(async it => {
+          const data = await imageStorage.get(`kids_joy_img_${it.id}`);
+          return { id: it.id, data };
+        })
+      );
+      const map: Record<string, string> = {};
+      results.forEach(res => { if (res.data) map[res.id] = res.data; });
+      setImageCache(prev => ({ ...prev, ...map }));
+    };
+    loadImages();
+  }, [category]);
 
   const handleSpeech = async (text: string, useLocal = true) => {
     if (isSpeaking) return;
@@ -148,9 +165,9 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   // Render Helpers
   const renderItemVisual = (item: Item, className: string = "text-6xl") => {
     if (!item) return null;
-    const img = getCachedImage(item.id);
+    const img = imageCache[item.id];
     if (img) {
-      return <img src={img} alt={item.name} className="w-full h-full object-contain rounded-2xl" />;
+      return <img src={img} alt={item.name} className="w-full h-full object-contain rounded-2xl animate-in fade-in" />;
     }
     return <span className={className}>{item.emoji}</span>;
   };
