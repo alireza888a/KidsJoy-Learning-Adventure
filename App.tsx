@@ -8,7 +8,6 @@ import { playTTSSound, playLocalSpeech } from './services/audioPlayer';
 
 const App: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>(() => {
-    // Note: We use 'kids_joy_categories_v2' to force unique ID update for all items
     const saved = localStorage.getItem('kids_joy_categories_v2');
     return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
   });
@@ -26,6 +25,7 @@ const App: React.FC = () => {
   const [isExpanding, setIsExpanding] = useState(false);
   const [isGeneratingImg, setIsGeneratingImg] = useState(false);
   const [itemImage, setItemImage] = useState<string | null>(null);
+  const [aiActive, setAiActive] = useState(!!process.env.API_KEY);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDown = useRef(false);
@@ -41,57 +41,26 @@ const App: React.FC = () => {
       const currentItem = state.selectedCategory.items[learningIndex];
       const cachedImg = localStorage.getItem(`kids_joy_img_${currentItem.id}`);
       setItemImage(cachedImg);
-      // WE REMOVED pre-fetch generateSpeech here to save quota
     }
   }, [learningIndex, state.view, state.selectedCategory]);
 
-  const handleDragStart = (e: any) => {
-    isDown.current = true;
-    const clientX = e.pageX || e.touches?.[0]?.pageX;
-    startX.current = clientX - (scrollRef.current?.offsetLeft || 0);
-    scrollLeft.current = scrollRef.current?.scrollLeft || 0;
-  };
-
-  const handleDragEnd = () => { isDown.current = false; };
-
-  const handleDragMove = (e: any) => {
-    if (!isDown.current || !scrollRef.current) return;
-    e.preventDefault();
-    const clientX = e.pageX || e.touches?.[0]?.pageX;
-    const x = clientX - scrollRef.current.offsetLeft;
-    const walk = (x - startX.current) * 2;
-    scrollRef.current.scrollLeft = scrollLeft.current - walk;
-  };
-
-  const handleSpeech = async (text: string, forceGemini = false) => {
+  const handleSpeech = async (text: string) => {
     if (isSpeaking) return;
     setIsSpeaking(true);
     try {
       let speechPlayed = false;
-      
-      // Try Gemini TTS if we have an API Key and it's not explicitly disabled
       if (process.env.API_KEY) {
         try {
-          // We use a short timeout/abort check for Gemini to not keep the user waiting if quota is hit
           const base64 = await generateSpeech(text);
           if (base64) {
             await playTTSSound(base64, text);
             speechPlayed = true;
           }
-        } catch (apiError) {
-          console.warn("Gemini TTS Quota exceeded, falling back to local speech.");
-        }
+        } catch (e) { console.warn("Fallback to local speech"); }
       }
-      
-      // Fallback to local device speech if Gemini failed or wasn't used
-      if (!speechPlayed) {
-        await playLocalSpeech(text);
-      }
-    } catch (e) { 
-      console.error("Speech error:", e); 
-    } finally {
-      setIsSpeaking(false);
-    }
+      if (!speechPlayed) await playLocalSpeech(text);
+    } catch (e) { console.error(e); }
+    finally { setIsSpeaking(false); }
   };
 
   const handleImageGeneration = async () => {
@@ -126,20 +95,22 @@ const App: React.FC = () => {
   };
 
   const goMain = () => setState({ ...state, view: 'main', selectedGame: null });
-  const goLearning = (cat: Category) => { 
-    setState({ ...state, selectedCategory: cat, view: 'learning_detail' }); 
-    setLearningIndex(0); 
-    setShowPersian(false); 
-  };
-
+  
   const renderMain = () => (
     <div className="min-h-screen flex flex-col p-0 animate-in fade-in duration-500 bg-white">
       <div className="bg-[#FFD233] pt-12 pb-6 px-6 rounded-b-[2.5rem] shadow-lg flex flex-col items-center relative">
         <h1 className="text-3xl font-kids text-white uppercase tracking-tighter drop-shadow-sm">Explorer 🚀</h1>
         <p className="text-white/80 font-bold text-[10px] uppercase tracking-[0.2em] mt-0.5">Ready for Adventure!</p>
+        
+        {/* AI Status Badge */}
+        <div className={`absolute top-4 right-4 px-2 py-1 rounded-full flex items-center space-x-1 border ${aiActive ? 'bg-green-50 border-green-200 text-green-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}>
+          <div className={`w-1.5 h-1.5 rounded-full ${aiActive ? 'bg-green-500 animate-pulse' : 'bg-orange-500'}`}></div>
+          <span className="text-[8px] font-bold uppercase">{aiActive ? 'AI Online' : 'AI Offline'}</span>
+        </div>
       </div>
+      
       <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-5">
-        <button onClick={() => goLearning(categories[0])} className="w-full bg-[#6366F1] py-12 rounded-[3.5rem] shadow-card flex flex-col items-center transform active:scale-95 transition-all">
+        <button onClick={() => setState({ ...state, view: 'learning_detail', selectedCategory: categories[0] })} className="w-full bg-[#6366F1] py-12 rounded-[3.5rem] shadow-card flex flex-col items-center transform active:scale-95 transition-all">
           <span className="text-7xl mb-3">📚</span>
           <span className="text-2xl font-kids text-white tracking-tighter uppercase">Learning Room</span>
         </button>
@@ -148,6 +119,12 @@ const App: React.FC = () => {
           <span className="text-2xl font-kids text-white tracking-tighter uppercase">Game Zone</span>
         </button>
       </div>
+      
+      {!aiActive && (
+        <div className="p-4 bg-orange-50 border-t border-orange-100 text-center">
+          <p className="text-[9px] text-orange-700 font-bold uppercase tracking-wider">Note: Connect your API Key in Vercel settings to unlock AI images & voices!</p>
+        </div>
+      )}
     </div>
   );
 
@@ -158,7 +135,7 @@ const App: React.FC = () => {
       <div className="min-h-screen flex flex-col bg-white">
         <div className="bg-[#FFD233] pt-10 pb-4 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative z-20">
           <h1 className="text-xl font-kids text-white uppercase tracking-tighter">{cat.name}</h1>
-          <button onClick={goMain} className="absolute right-6 bottom-3 bg-white p-2.5 rounded-full shadow-md text-gray-600 scale-75">🏠</button>
+          <button onClick={goMain} className="absolute right-6 bottom-3 bg-white p-2.5 rounded-full shadow-md text-gray-600 scale-75 active:scale-90 transition-transform">🏠</button>
           <div className="absolute left-6 bottom-3 bg-white/30 px-3 py-1 rounded-full text-[10px] text-white font-bold">{learningIndex + 1} / {cat.items.length}</div>
         </div>
         
@@ -174,12 +151,7 @@ const App: React.FC = () => {
           className="flex overflow-x-auto hide-scrollbar px-5 py-4 space-x-4 bg-gray-50/50 select-none cursor-grab active:cursor-grabbing"
         >
           {categories.map((c) => (
-            <button 
-              key={c.id} 
-              onPointerDown={(e) => e.stopPropagation()} 
-              onClick={() => goLearning(c)} 
-              className="flex flex-col items-center space-y-1 flex-shrink-0"
-            >
+            <button key={c.id} onPointerDown={(e) => e.stopPropagation()} onClick={() => { setState({ ...state, selectedCategory: c }); setLearningIndex(0); }} className="flex flex-col items-center space-y-1 flex-shrink-0">
               <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl transition-all ${cat.id === c.id ? 'bg-[#FF9F1C] ring-4 ring-orange-100 scale-110 shadow-md' : 'bg-white shadow-sm border border-gray-100'}`}>{c.icon}</div>
               <span className={`text-[9px] font-bold uppercase tracking-widest ${cat.id === c.id ? 'text-indigo-600' : 'text-gray-400'}`}>{c.name}</span>
             </button>
@@ -206,45 +178,59 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
+        
         <div className="px-8 flex justify-between space-x-4 py-6">
           <button onClick={() => { setLearningIndex(prev => (prev - 1 + cat.items.length) % cat.items.length); setShowPersian(false); }} className="flex-1 bg-gray-100 py-5 rounded-2xl shadow-sm text-gray-500 font-bold text-sm uppercase tracking-widest active:bg-gray-200 transition-colors">Back</button>
           <button onClick={() => { setLearningIndex(prev => (prev + 1) % cat.items.length); setShowPersian(false); }} className="flex-1 bg-gray-100 py-5 rounded-2xl shadow-sm text-gray-500 font-bold text-sm uppercase tracking-widest active:bg-gray-200 transition-colors">Next</button>
         </div>
+        
         <div className="px-8 pb-8">
-          <button disabled={isExpanding} onClick={handleExpand} className={`w-full ${isExpanding ? 'bg-gray-200 text-gray-400' : 'bg-[#22C55E] text-white'} py-5 rounded-2xl shadow-lg flex items-center justify-center space-x-3 active:scale-95 transition-all`}><span className="text-2xl">{isExpanding ? '⏳' : '🪄'}</span><span className="text-xs font-bold uppercase tracking-widest">{isExpanding ? 'Magic in progress...' : `Grow ${cat.name} (+10 Words)`}</span></button>
+          <button disabled={isExpanding || !aiActive} onClick={handleExpand} className={`w-full ${isExpanding || !aiActive ? 'bg-gray-200 text-gray-400' : 'bg-[#22C55E] text-white'} py-5 rounded-2xl shadow-lg flex items-center justify-center space-x-3 active:scale-95 transition-all`}><span className="text-2xl">{isExpanding ? '⏳' : !aiActive ? '🔒' : '🪄'}</span><span className="text-xs font-bold uppercase tracking-widest">{isExpanding ? 'Magic in progress...' : !aiActive ? 'AI Disabled (No Key)' : `Grow ${cat.name} (+10 Words)`}</span></button>
         </div>
       </div>
     );
   };
 
-  const renderGameTypes = () => (
-    <div className="min-h-screen bg-white flex flex-col animate-in slide-in-from-right duration-300">
-       <div className="bg-[#FFD233] pt-12 pb-6 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative"><h1 className="text-2xl font-kids text-white uppercase">Game Zone 🎮</h1><button onClick={goMain} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-md text-gray-600 scale-75">🏠</button></div>
-        <div className="flex-1 p-6 grid grid-cols-1 gap-4 overflow-y-auto hide-scrollbar">
-          {Object.values(GameType).map(type => (
-            <button key={type} onClick={() => setState({ ...state, selectedGame: type, view: 'game_cats' })} className="flex items-center p-6 bg-white rounded-[3rem] border-2 border-indigo-50 shadow-soft active:border-indigo-400 transform active:scale-98 transition-all"><span className="text-4xl mr-6">{type === GameType.FLASHCARDS ? '🗂️' : type === GameType.QUIZ ? '❓' : type === GameType.MEMORY ? '🧠' : type === GameType.MATCHING ? '🔗' : type === GameType.SPELLING ? '🔤' : '🔍'}</span><span className="text-xl font-kids text-indigo-700 uppercase">{type}</span></button>
-          ))}
-        </div>
-    </div>
-  );
-
-  const renderGameCats = () => (
-    <div className="min-h-screen bg-white flex flex-col animate-in slide-in-from-right duration-300">
-       <div className="bg-[#FFD233] pt-12 pb-6 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative"><h1 className="text-2xl font-kids text-white uppercase">Pick Topic 🎨</h1><button onClick={() => setState({...state, view: 'game_types'})} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-md text-gray-600 scale-75">🔙</button></div>
-        <div className="flex-1 p-5 grid grid-cols-2 gap-4 overflow-y-auto hide-scrollbar">
-           {categories.map(cat => (
-             <button key={cat.id} onClick={() => setState({ ...state, selectedCategory: cat, view: 'game_active' })} className={`${cat.color} p-7 rounded-[3rem] shadow-lg flex flex-col items-center justify-center space-y-2 transform active:scale-95 transition-all`}><span className="text-5xl">{cat.icon}</span><span className="text-white font-kids text-sm uppercase">{cat.name}</span></button>
-           ))}
-        </div>
-    </div>
-  );
+  const handleDragStart = (e: any) => {
+    isDown.current = true;
+    const clientX = e.pageX || e.touches?.[0]?.pageX;
+    startX.current = clientX - (scrollRef.current?.offsetLeft || 0);
+    scrollLeft.current = scrollRef.current?.scrollLeft || 0;
+  };
+  const handleDragEnd = () => { isDown.current = false; };
+  const handleDragMove = (e: any) => {
+    if (!isDown.current || !scrollRef.current) return;
+    e.preventDefault();
+    const clientX = e.pageX || e.touches?.[0]?.pageX;
+    const x = clientX - scrollRef.current.offsetLeft;
+    const walk = (x - startX.current) * 2;
+    scrollRef.current.scrollLeft = scrollLeft.current - walk;
+  };
 
   return (
     <div className="max-w-md mx-auto min-h-screen relative overflow-hidden bg-white shadow-2xl">
       {state.view === 'main' && renderMain()}
       {state.view === 'learning_detail' && renderLearningDetail()}
-      {state.view === 'game_types' && renderGameTypes()}
-      {state.view === 'game_cats' && renderGameCats()}
+      {state.view === 'game_types' && (
+        <div className="min-h-screen bg-white flex flex-col animate-in slide-in-from-right duration-300">
+           <div className="bg-[#FFD233] pt-12 pb-6 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative"><h1 className="text-2xl font-kids text-white uppercase">Game Zone 🎮</h1><button onClick={goMain} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-md text-gray-600 scale-75">🏠</button></div>
+            <div className="flex-1 p-6 grid grid-cols-1 gap-4 overflow-y-auto hide-scrollbar">
+              {Object.values(GameType).map(type => (
+                <button key={type} onClick={() => setState({ ...state, selectedGame: type, view: 'game_cats' })} className="flex items-center p-6 bg-white rounded-[3rem] border-2 border-indigo-50 shadow-soft active:border-indigo-400 transform active:scale-98 transition-all"><span className="text-4xl mr-6">{type === GameType.FLASHCARDS ? '🗂️' : type === GameType.QUIZ ? '❓' : type === GameType.MEMORY ? '🧠' : type === GameType.MATCHING ? '🔗' : type === GameType.SPELLING ? '🔤' : '🔍'}</span><span className="text-xl font-kids text-indigo-700 uppercase">{type}</span></button>
+              ))}
+            </div>
+        </div>
+      )}
+      {state.view === 'game_cats' && (
+        <div className="min-h-screen bg-white flex flex-col animate-in slide-in-from-right duration-300">
+           <div className="bg-[#FFD233] pt-12 pb-6 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative"><h1 className="text-2xl font-kids text-white uppercase">Pick Topic 🎨</h1><button onClick={() => setState({...state, view: 'game_types'})} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-md text-gray-600 scale-75">🔙</button></div>
+            <div className="flex-1 p-5 grid grid-cols-2 gap-4 overflow-y-auto hide-scrollbar">
+               {categories.map(cat => (
+                 <button key={cat.id} onClick={() => setState({ ...state, selectedCategory: cat, view: 'game_active' })} className={`${cat.color} p-7 rounded-[3rem] shadow-lg flex flex-col items-center justify-center space-y-2 transform active:scale-95 transition-all`}><span className="text-5xl">{cat.icon}</span><span className="text-white font-kids text-sm uppercase">{cat.name}</span></button>
+               ))}
+            </div>
+        </div>
+      )}
       {state.view === 'game_active' && state.selectedCategory && state.selectedGame && (
         <GameEngine category={state.selectedCategory} gameType={state.selectedGame} onBack={() => setState({ ...state, view: 'game_types' })} />
       )}
