@@ -31,14 +31,36 @@ async function decodeAudioData(
 let audioCtx: AudioContext | null = null;
 const audioCache = new Map<string, AudioBuffer>();
 
-// Instant local speech for simple words
+/**
+ * Enhanced local speech using browser Synthesis.
+ * It strictly speaks ONLY the word/letter passed.
+ */
 export const playLocalSpeech = (text: string) => {
   return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance(text.trim());
     utterance.lang = 'en-US';
-    utterance.rate = 0.9; // Slightly slower for kids
-    utterance.pitch = 1.2; // Cheerful pitch
-    utterance.onend = resolve;
+    
+    // Attempt to find a higher quality female voice (usually better for kids apps)
+    const voices = window.speechSynthesis.getVoices();
+    const premiumVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Premium')));
+    if (premiumVoice) utterance.voice = premiumVoice;
+
+    utterance.rate = 0.85; // Slightly slower for clarity
+    utterance.pitch = 1.1; // Cheerful tone
+    utterance.volume = 1.0;
+
+    utterance.onend = () => {
+      resolve(true);
+    };
+
+    utterance.onerror = (e) => {
+      console.error("Speech error", e);
+      resolve(false);
+    };
+
     window.speechSynthesis.speak(utterance);
   });
 };
