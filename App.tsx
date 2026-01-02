@@ -1,21 +1,15 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CATEGORIES as INITIAL_CATEGORIES } from './constants';
-import { Category, GameType, GameState, Item } from './types';
+import { Category, GameType, GameState } from './types';
 import { GameEngine } from './components/Games';
 import { generateSpeech, expandCategoryItems, generateItemImage } from './services/geminiService';
 import { playTTSSound, playLocalSpeech } from './services/audioPlayer';
 import { imageStorage } from './services/storage';
 
-const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const RAINBOW_COLORS = [
-  '#FF595E', '#FF924C', '#FFCA3A', '#C5CA30', '#8AC926', 
-  '#52A675', '#1982C4', '#4267AC', '#6A4C93', '#B5179E'
-];
-
 const App: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>(() => {
-    const saved = localStorage.getItem('kids_joy_categories_v3');
+    const saved = localStorage.getItem('kids_joy_categories_v4');
     return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
   });
 
@@ -32,23 +26,35 @@ const App: React.FC = () => {
   const [isExpanding, setIsExpanding] = useState(false);
   const [isGeneratingImg, setIsGeneratingImg] = useState(false);
   const [itemImage, setItemImage] = useState<string | null>(null);
-  const [aiActive, setAiActive] = useState(!!process.env.API_KEY);
 
+  // Persistence
   useEffect(() => {
-    localStorage.setItem('kids_joy_categories_v3', JSON.stringify(categories));
+    localStorage.setItem('kids_joy_categories_v4', JSON.stringify(categories));
   }, [categories]);
+
+  // Handle API Errors (like 403 Forbidden)
+  const handleApiError = async (error: any) => {
+    console.error("API Call failed:", error);
+    const errorMsg = error?.message || "";
+    // If forbidden or not found, re-prompt for key selection
+    if (errorMsg.includes("403") || errorMsg.includes("entity was not found") || errorMsg.includes("API key")) {
+      if (window.aistudio) {
+        await window.aistudio.openSelectKey();
+      } else {
+        alert("Please set a valid API key in your environment settings.");
+      }
+    } else {
+      alert("Oops! Something went wrong with the Magic. Please try again.");
+    }
+  };
 
   useEffect(() => {
     const loadImage = async () => {
       if (state.view === 'learning_detail' && state.selectedCategory) {
-        const items = state.selectedCategory.items;
-        if (items && items.length > 0) {
-          const idx = Math.min(learningIndex, items.length - 1);
-          const currentItem = items[idx];
-          if (currentItem) {
-            const cachedImg = await imageStorage.get(`kids_joy_img_${currentItem.id}`);
-            setItemImage(cachedImg);
-          }
+        const item = state.selectedCategory.items[learningIndex];
+        if (item) {
+          const cached = await imageStorage.get(`kids_joy_img_${item.id}`);
+          setItemImage(cached);
         }
       }
     };
@@ -58,230 +64,206 @@ const App: React.FC = () => {
   const handleSpeech = async (text: string) => {
     if (isSpeaking) return;
     setIsSpeaking(true);
-    if (navigator.vibrate) navigator.vibrate(15);
-    
     try {
-      let speechPlayed = false;
-      if (process.env.API_KEY) {
-        try {
-          const base64 = await generateSpeech(text);
-          if (base64) {
-            await playTTSSound(base64, text);
-            speechPlayed = true;
-          }
-        } catch (e) { console.warn("AI Speech failed."); }
+      let played = false;
+      // We try AI speech first if we have a key (even if it might fail)
+      try {
+        const audio = await generateSpeech(text);
+        if (audio) { 
+          await playTTSSound(audio, text); 
+          played = true; 
+        }
+      } catch (e) {
+        // Silently fall back to local speech for simple audio, but log for dev
+        console.warn("AI Speech failed, using local fallback");
       }
-      if (!speechPlayed) await playLocalSpeech(text);
-    } catch (e) { console.error(e); }
-    finally { setIsSpeaking(false); }
+      
+      if (!played) await playLocalSpeech(text);
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      setIsSpeaking(false); 
+    }
   };
 
-  const handleImageGeneration = async () => {
-    if (isGeneratingImg || !state.selectedCategory || !process.env.API_KEY) return;
-    const items = state.selectedCategory.items;
-    const item = items[learningIndex] || items[0];
-    if (!item) return;
-
+  const handleImageGen = async () => {
+    const item = state.selectedCategory?.items[learningIndex];
+    if (isGeneratingImg || !item) return;
     setIsGeneratingImg(true);
     try {
-      const imgUrl = await generateItemImage(item.name, state.selectedCategory.name);
-      if (imgUrl) {
-        await imageStorage.set(`kids_joy_img_${item.id}`, imgUrl);
-        setItemImage(imgUrl);
+      const url = await generateItemImage(item.name, state.selectedCategory!.name);
+      if (url) {
+        await imageStorage.set(`kids_joy_img_${item.id}`, url);
+        setItemImage(url);
       }
-    } catch (e) { console.error(e); }
-    setIsGeneratingImg(false);
+    } catch (e) { 
+      await handleApiError(e);
+    } finally { 
+      setIsGeneratingImg(false); 
+    }
   };
 
-  const goMain = () => {
-    if (navigator.vibrate) navigator.vibrate(10);
-    setState({ ...state, view: 'main', selectedGame: null });
+  const handleExpand = async () => {
+    if (isExpanding || !state.selectedCategory) return;
+    setIsExpanding(true);
+    try {
+      const newItems = await expandCategoryItems(state.selectedCategory.name, state.selectedCategory.items);
+      if (newItems && newItems.length > 0) {
+        const updated = categories.map(c => 
+          c.id === state.selectedCategory!.id ? { ...c, items: [...c.items, ...newItems] } : c
+        );
+        setCategories(updated);
+        setState(s => ({ ...s, selectedCategory: updated.find(cat => cat.id === s.selectedCategory?.id) || s.selectedCategory }));
+      }
+    } catch (e) { 
+      await handleApiError(e);
+    } finally { 
+      setIsExpanding(false); 
+    }
   };
-  
+
   return (
-    <div className="w-full h-full max-w-md mx-auto relative overflow-hidden bg-white selection:bg-none flex flex-col">
+    <div className="flex-1 flex flex-col h-full w-full max-w-md mx-auto bg-white overflow-hidden relative shadow-xl">
       {state.view === 'main' && (
-        <div className="flex-1 flex flex-col p-0 animate-in fade-in duration-500 bg-white overflow-hidden">
-          <div className="bg-[#FFD233] pt-12 pb-10 px-6 rounded-b-[4rem] shadow-lg flex flex-col items-center relative flex-shrink-0 z-10">
-            <h1 className="text-4xl xs:text-5xl font-kids text-white uppercase tracking-tighter drop-shadow-md">KidsJoy 🌟</h1>
-            <p className="text-white/90 font-bold text-[10px] uppercase tracking-[0.2em] mt-1">Mobile Learning Fun</p>
-            
-            <div className={`absolute top-4 right-4 px-3 py-1 rounded-full flex items-center space-x-1 border shadow-sm ${aiActive ? 'bg-green-50 border-green-200 text-green-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${aiActive ? 'bg-green-500 animate-pulse' : 'bg-orange-400'}`}></div>
-              <span className="text-[9px] font-black uppercase">{aiActive ? 'AI' : 'Offline'}</span>
-            </div>
+        <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden">
+          <div className="bg-[#FFD233] pt-10 pb-6 px-6 rounded-b-[2.5rem] shadow-lg flex flex-col items-center flex-shrink-0">
+            <h1 className="text-2xl font-kids text-white uppercase tracking-tighter drop-shadow-sm">KidsJoy Learning</h1>
           </div>
           
-          <div className="flex-1 scroll-container p-5 space-y-5 hide-scrollbar overflow-y-auto">
-            <button onClick={() => { if (navigator.vibrate) navigator.vibrate(25); setState({ ...state, view: 'alphabet' }); }} className="w-full bg-[#22C55E] py-8 rounded-[2.5rem] shadow-card flex items-center px-8 active:scale-95 transition-all">
-              <span className="text-6xl mr-5">🔤</span>
-              <div className="text-left text-white">
-                <span className="block text-2xl font-kids uppercase leading-none">Alphabet</span>
-                <span className="text-[10px] font-bold uppercase opacity-80 mt-1 block">A to Z Room</span>
-              </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 hide-scrollbar">
+            <button onClick={() => setState({ ...state, view: 'alphabet' })} className="w-full bg-[#22C55E] p-5 rounded-3xl shadow-md flex items-center space-x-4">
+              <span className="text-3xl">🔤</span>
+              <span className="text-lg font-kids text-white">ABC ROOM</span>
             </button>
-
-            <button onClick={() => { if (navigator.vibrate) navigator.vibrate(25); setState({ ...state, view: 'learning_detail', selectedCategory: categories[0] }); }} className="w-full bg-[#6366F1] py-8 rounded-[2.5rem] shadow-card flex items-center px-8 active:scale-95 transition-all">
-              <span className="text-6xl mr-5">🍎</span>
-              <div className="text-left text-white">
-                <span className="block text-2xl font-kids uppercase leading-none">Words</span>
-                <span className="text-[10px] font-bold uppercase opacity-80 mt-1 block">Vocabulary</span>
-              </div>
+            <button onClick={() => setState({ ...state, view: 'learning_detail', selectedCategory: categories[0] })} className="w-full bg-[#6366F1] p-5 rounded-3xl shadow-md flex items-center space-x-4">
+              <span className="text-3xl">🍎</span>
+              <span className="text-lg font-kids text-white">NEW WORDS</span>
             </button>
-
-            <button onClick={() => { if (navigator.vibrate) navigator.vibrate(25); setState({ ...state, view: 'game_types' }); }} className="w-full bg-[#FF7043] py-8 rounded-[2.5rem] shadow-card flex items-center px-8 active:scale-95 transition-all">
-              <span className="text-6xl mr-5">🎮</span>
-              <div className="text-left text-white">
-                <span className="block text-2xl font-kids uppercase leading-none">Games</span>
-                <span className="text-[10px] font-bold uppercase opacity-80 mt-1 block">Play & Learn</span>
-              </div>
+            <button onClick={() => setState({ ...state, view: 'game_types' })} className="w-full bg-[#FF7043] p-5 rounded-3xl shadow-md flex items-center space-x-4">
+              <span className="text-3xl">🎮</span>
+              <span className="text-lg font-kids text-white">PLAY GAMES</span>
             </button>
-            <div className="h-10"></div>
-          </div>
-        </div>
-      )}
-
-      {state.view === 'alphabet' && (
-        <div className="flex-1 bg-white flex flex-col animate-in slide-in-from-bottom duration-500 overflow-hidden">
-          <div className="bg-[#22C55E] pt-12 pb-5 px-6 rounded-b-[3rem] shadow-md flex flex-col items-center relative flex-shrink-0 z-10">
-            <h1 className="text-2xl font-kids text-white uppercase">ABC Room</h1>
-            <button onClick={goMain} className="absolute left-6 bottom-4 bg-white p-2.5 rounded-full shadow-lg text-gray-600 active:scale-90">🏠</button>
-          </div>
-          <div className="flex-1 p-4 grid grid-cols-3 gap-3 hide-scrollbar overflow-y-auto">
-            {ALPHABET.map((letter, idx) => (
+            
+            <div className="p-4 bg-white/50 rounded-2xl border border-dashed border-slate-300 text-center">
+              <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">AI Configuration</p>
               <button 
-                key={letter} 
-                onClick={() => handleSpeech(letter)} 
-                style={{ backgroundColor: RAINBOW_COLORS[idx % RAINBOW_COLORS.length] }} 
-                className="aspect-square rounded-2xl shadow-lg flex items-center justify-center active:scale-90 transition-all border-b-[4px] border-black/10"
+                onClick={() => window.aistudio?.openSelectKey()} 
+                className="text-[10px] font-bold text-indigo-600 underline"
               >
-                <span className="text-4xl font-kids text-white drop-shadow-md">{letter}</span>
+                Change API Key
               </button>
-            ))}
-            <div className="h-10 col-span-3"></div>
+            </div>
           </div>
         </div>
       )}
 
       {state.view === 'learning_detail' && state.selectedCategory && (
-        <div className="flex-1 flex flex-col bg-white overflow-hidden">
-          <div className="bg-[#FFD233] pt-10 pb-4 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative z-20 flex-shrink-0">
-            <h1 className="text-xl font-kids text-white uppercase">{state.selectedCategory.name}</h1>
-            <button onClick={goMain} className="absolute right-6 bottom-3 bg-white p-2 rounded-full shadow-lg text-gray-600 active:scale-90">🏠</button>
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
+          <div className="bg-[#FFD233] pt-8 pb-3 px-6 rounded-b-3xl shadow-sm flex items-center justify-between relative flex-shrink-0">
+            <button onClick={() => setState({...state, view: 'main'})} className="bg-white/40 p-2 rounded-full text-white text-sm">🏠</button>
+            <h1 className="text-lg font-kids text-white uppercase">{state.selectedCategory.name}</h1>
+            <div className="w-8"></div>
           </div>
           
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex overflow-x-auto hide-scrollbar px-5 py-4 space-x-4 bg-gray-50/50 flex-shrink-0">
+            <div className="flex overflow-x-auto hide-scrollbar px-4 py-3 space-x-2 bg-white border-b">
               {categories.map((c) => (
-                <button key={c.id} onClick={() => { setState({ ...state, selectedCategory: c }); setLearningIndex(0); if (navigator.vibrate) navigator.vibrate(10); }} className="flex flex-col items-center flex-shrink-0">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${state.selectedCategory?.id === c.id ? 'bg-[#FF9F1C] shadow-lg scale-110' : 'bg-white border shadow-sm opacity-60'}`}>{c.icon}</div>
-                </button>
+                <button key={c.id} onClick={() => { setState({ ...state, selectedCategory: c }); setLearningIndex(0); }} 
+                  className={`w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center text-lg ${state.selectedCategory?.id === c.id ? 'bg-[#FF9F1C] text-white shadow-md' : 'bg-slate-50 opacity-40'}`}>{c.icon}</button>
               ))}
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center p-6 min-h-0">
-              <div onClick={() => { setShowPersian(!showPersian); if (navigator.vibrate) navigator.vibrate(10); }} className={`w-full max-w-[280px] aspect-square rounded-[3rem] shadow-card flex flex-col items-center justify-center relative transition-all duration-300 active:scale-[0.97] cursor-pointer ${showPersian ? 'bg-indigo-600' : 'bg-white border-4 border-indigo-50'}`}>
-                {!showPersian ? (
-                  <>
-                    <div className="w-full h-full flex items-center justify-center p-6">
-                      {itemImage ? <img src={itemImage} alt="item" className="w-full h-full object-contain rounded-[2rem] animate-in zoom-in" /> : <span className="text-[8rem] drop-shadow-xl">{state.selectedCategory.items[learningIndex]?.emoji}</span>}
+            <div className="flex-1 flex flex-col items-center justify-center p-4">
+              <div className="learning-card w-full max-w-[260px] flex flex-col items-center">
+                <div onClick={() => setShowPersian(!showPersian)} className={`w-full aspect-square rounded-[3rem] shadow-xl flex flex-col items-center justify-center relative border-4 transition-all ${showPersian ? 'bg-indigo-600 border-indigo-400' : 'bg-white border-slate-50'}`}>
+                  {!showPersian ? (
+                    <>
+                      <div className="flex-1 w-full p-6 flex items-center justify-center overflow-hidden">
+                        {itemImage ? (
+                          <img src={itemImage} alt="item" className="max-w-full max-h-full object-contain rounded-2xl animate-in zoom-in" />
+                        ) : (
+                          <span className="text-8xl drop-shadow-md">{state.selectedCategory.items[learningIndex]?.emoji}</span>
+                        )}
+                      </div>
+                      <div className="mb-6 bg-indigo-50 px-5 py-2 rounded-full border border-indigo-100">
+                        <span className="text-lg font-kids text-indigo-700 uppercase">{state.selectedCategory.items[learningIndex]?.name}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center p-6 animate-in zoom-in">
+                      <h2 className="text-4xl font-kids text-white" dir="rtl">{state.selectedCategory.items[learningIndex]?.persianName}</h2>
+                      <p className="text-[10px] text-white/50 mt-4 uppercase font-bold">Tap to see emoji</p>
                     </div>
-                    <div className="absolute bottom-4 w-full text-center">
-                      <span className="text-2xl font-kids text-indigo-700 bg-white/95 px-6 py-1.5 rounded-full shadow-sm">{state.selectedCategory.items[learningIndex]?.name}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center p-6 animate-in fade-in zoom-in">
-                    <h2 className="text-4xl font-kids text-white leading-tight" dir="rtl">{state.selectedCategory.items[learningIndex]?.persianName}</h2>
-                    <p className="mt-4 text-white/50 text-[10px] font-black uppercase tracking-widest">Tap to flip back</p>
-                  </div>
-                )}
-                
-                <button onClick={(e) => { e.stopPropagation(); handleSpeech(state.selectedCategory?.items[learningIndex]?.name || ""); }} className="absolute -top-2 -right-2 w-12 h-12 bg-indigo-500 rounded-full flex items-center justify-center text-white shadow-xl border-4 border-white active:scale-90 z-30">
-                  <span className="text-xl">🔊</span>
-                </button>
-                
-                {aiActive && (
-                  <button onClick={(e) => { e.stopPropagation(); handleImageGeneration(); }} className={`absolute -top-2 -left-2 w-12 h-12 bg-pink-500 rounded-full flex items-center justify-center text-white shadow-xl border-4 border-white active:scale-90 z-30 ${isGeneratingImg ? 'animate-spin' : ''}`}>
-                    <span className="text-xl">{isGeneratingImg ? '✨' : '🎨'}</span>
+                  )}
+                  
+                  <button onClick={(e) => { e.stopPropagation(); handleSpeech(state.selectedCategory?.items[learningIndex]?.name || ""); }} className="absolute -top-3 -right-3 w-12 h-12 bg-indigo-500 rounded-full flex items-center justify-center text-white shadow-lg border-4 border-white active:scale-90">🔊</button>
+                  <button onClick={(e) => { e.stopPropagation(); handleImageGen(); }} className={`absolute -top-3 -left-3 w-12 h-12 bg-pink-500 rounded-full flex items-center justify-center text-white shadow-lg border-4 border-white active:scale-90 ${isGeneratingImg ? 'animate-spin' : ''}`}>
+                    {isGeneratingImg ? '⏳' : '🎨'}
                   </button>
-                )}
-              </div>
+                </div>
 
-              <div className="flex w-full max-w-[280px] space-x-4 mt-8">
-                <button onClick={() => { setLearningIndex(p => (p > 0 ? p - 1 : state.selectedCategory!.items.length - 1)); setShowPersian(false); if (navigator.vibrate) navigator.vibrate(10); }} className="flex-1 bg-gray-100 py-4 rounded-2xl font-black text-gray-400 uppercase text-xs tracking-widest active:bg-gray-200">Prev</button>
-                <button onClick={() => { setLearningIndex(p => (p < state.selectedCategory!.items.length - 1 ? p + 1 : 0)); setShowPersian(false); if (navigator.vibrate) navigator.vibrate(15); }} className="flex-1 bg-indigo-600 py-4 rounded-2xl font-black text-white shadow-lg uppercase text-xs tracking-widest active:scale-95">Next</button>
+                <div className="flex w-full space-x-3 mt-6">
+                  <button onClick={() => { setLearningIndex(p => (p > 0 ? p - 1 : state.selectedCategory!.items.length - 1)); setShowPersian(false); }} className="flex-1 bg-slate-100 py-3 rounded-2xl font-bold text-slate-400 text-xs">PREV</button>
+                  <button onClick={() => { setLearningIndex(p => (p < state.selectedCategory!.items.length - 1 ? p + 1 : 0)); setShowPersian(false); }} className="flex-1 bg-indigo-600 py-3 rounded-2xl font-bold text-white shadow-md text-xs">NEXT</button>
+                </div>
               </div>
             </div>
-            
-            {aiActive && (
-              <div className="px-6 pb-6 flex-shrink-0">
-                 <button 
-                    onClick={async () => {
-                      if (isExpanding || !aiActive) return;
-                      setIsExpanding(true);
-                      if (navigator.vibrate) navigator.vibrate(30);
-                      try {
-                        const newItems = await expandCategoryItems(state.selectedCategory!.name, state.selectedCategory!.items);
-                        if (newItems && newItems.length > 0) {
-                          const updatedCats = categories.map(c => 
-                            c.id === state.selectedCategory!.id ? { ...c, items: [...c.items, ...newItems] } : c
-                          );
-                          setCategories(updatedCats);
-                          setState(s => ({ ...s, selectedCategory: updatedCats.find(c => c.id === s.selectedCategory?.id) || s.selectedCategory }));
-                        }
-                      } catch (e) { console.error(e); }
-                      setIsExpanding(false);
-                    }} 
-                    disabled={isExpanding || !aiActive} 
-                    className={`w-full py-4 rounded-3xl font-black uppercase text-xs tracking-tighter shadow-lg transition-all active:scale-95 flex items-center justify-center space-x-2 ${aiActive ? 'bg-[#22C55E] text-white' : 'bg-gray-100 text-gray-400'}`}
-                  >
-                    <span className="text-xl">{isExpanding ? '⏳' : '🪄'}</span>
-                    <span>{isExpanding ? 'Magic...' : `Add 10 More Words`}</span>
-                 </button>
-              </div>
-            )}
+
+            <div className="px-5 pb-6">
+              <button onClick={handleExpand} disabled={isExpanding} className={`w-full py-4 rounded-2xl font-bold text-white shadow-lg transition-all flex items-center justify-center space-x-2 ${isExpanding ? 'bg-slate-300' : 'bg-magic'}`}>
+                <span>{isExpanding ? '🪄 MAGIC...' : `ADD 10 NEW ${state.selectedCategory.name.toUpperCase()}`}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {state.view === 'game_types' && (
-        <div className="flex-1 bg-white flex flex-col overflow-hidden">
-          <div className="bg-[#FFD233] pt-12 pb-5 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative z-10">
-            <h1 className="text-2xl font-kids text-white uppercase tracking-tighter">Choose Game</h1>
-            <button onClick={goMain} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-lg text-gray-600">🏠</button>
+      {state.view === 'alphabet' && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="bg-[#22C55E] pt-8 pb-3 px-6 rounded-b-3xl shadow-sm flex items-center justify-between flex-shrink-0">
+            <button onClick={() => setState({...state, view: 'main'})} className="bg-white/40 p-2 rounded-full text-white text-sm">🏠</button>
+            <h1 className="text-lg font-kids text-white uppercase">ABC Room</h1>
+            <div className="w-8"></div>
           </div>
-          <div className="flex-1 p-5 space-y-4 overflow-y-auto hide-scrollbar">
-            {Object.values(GameType).map(type => (
-              <button key={type} onClick={() => { if (navigator.vibrate) navigator.vibrate(15); setState({ ...state, selectedGame: type, view: 'game_cats' }); }} className="w-full flex items-center p-5 bg-white rounded-3xl border-2 border-indigo-50 shadow-soft active:border-indigo-400 transition-all active:scale-98">
-                <span className="text-4xl mr-4">{type === GameType.FLASHCARDS ? '🗂️' : type === GameType.QUIZ ? '❓' : type === GameType.MEMORY ? '🧠' : '🎮'}</span>
-                <span className="text-lg font-kids text-indigo-700 uppercase">{type}</span>
-              </button>
+          <div className="flex-1 p-3 grid grid-cols-4 gap-2 overflow-y-auto hide-scrollbar">
+            {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => (
+              <button key={letter} onClick={() => handleSpeech(letter)} className="aspect-square bg-white rounded-2xl shadow-sm border-b-4 border-slate-100 flex items-center justify-center text-2xl font-kids text-slate-600 active:bg-slate-50">{letter}</button>
             ))}
-          </div>
-        </div>
-      )}
-
-      {state.view === 'game_cats' && (
-        <div className="flex-1 bg-white flex flex-col overflow-hidden">
-          <div className="bg-[#FFD233] pt-12 pb-5 px-6 rounded-b-[2.5rem] shadow-md flex flex-col items-center relative z-10">
-            <h1 className="text-2xl font-kids text-white uppercase tracking-tighter">Topic</h1>
-            <button onClick={() => setState({ ...state, view: 'game_types' })} className="absolute right-6 bottom-4 bg-white p-2 rounded-full shadow-lg text-gray-600">🔙</button>
-          </div>
-          <div className="flex-1 p-4 grid grid-cols-2 gap-4 overflow-y-auto hide-scrollbar">
-            {categories.map(cat => (
-              <button key={cat.id} onClick={() => { if (navigator.vibrate) navigator.vibrate(15); setState({ ...state, selectedCategory: cat, view: 'game_active' }); }} className={`${cat.color} p-6 rounded-[2.5rem] shadow-lg flex flex-col items-center justify-center active:scale-95 transition-all text-white space-y-1`}>
-                <span className="text-4xl drop-shadow-md">{cat.icon}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest">{cat.name}</span>
-              </button>
-            ))}
-            <div className="h-10 col-span-2"></div>
           </div>
         </div>
       )}
 
       {state.view === 'game_active' && state.selectedCategory && state.selectedGame && (
         <GameEngine category={state.selectedCategory} gameType={state.selectedGame} onBack={() => setState({ ...state, view: 'game_types' })} />
+      )}
+
+      {(state.view === 'game_types' || state.view === 'game_cats') && (
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+          <div className="bg-[#FFD233] pt-8 pb-3 px-6 rounded-b-3xl shadow-sm flex items-center justify-between flex-shrink-0">
+             <button onClick={() => setState({...state, view: 'main'})} className="bg-white/40 p-2 rounded-full text-white text-sm">🏠</button>
+             <h1 className="text-lg font-kids text-white uppercase">Games</h1>
+             <div className="w-8"></div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 hide-scrollbar">
+            {state.view === 'game_types' ? (
+              Object.values(GameType).map(type => (
+                <button key={type} onClick={() => setState({ ...state, selectedGame: type, view: 'game_cats' })} className="w-full flex items-center p-4 bg-white rounded-2xl border border-slate-100 shadow-sm active:border-indigo-400">
+                  <span className="text-2xl mr-4">{type === GameType.FLASHCARDS ? '🗂️' : '🎮'}</span>
+                  <span className="text-lg font-kids text-indigo-700 uppercase">{type}</span>
+                </button>
+              ))
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {categories.map(cat => (
+                  <button key={cat.id} onClick={() => setState({ ...state, selectedCategory: cat, view: 'game_active' })} className={`${cat.color} p-4 rounded-2xl shadow-md text-white flex flex-col items-center active:scale-95 transition-all`}>
+                    <span className="text-3xl">{cat.icon}</span>
+                    <span className="text-[9px] font-bold mt-1 uppercase">{cat.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
