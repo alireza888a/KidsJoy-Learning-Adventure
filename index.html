@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -16,37 +15,59 @@
             --safe-top: env(safe-area-inset-top, 0px);
             --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
-        body {
-            font-family: 'Outfit', sans-serif;
-            background-color: #f8fafc;
+        html, body {
+            height: 100%;
+            width: 100%;
             margin: 0;
             padding: 0;
-            overflow-x: hidden;
-            width: 100%;
-            height: 100%;
-            padding-top: var(--safe-top);
-            padding-bottom: var(--safe-bottom);
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            overflow: hidden; /* Prevent body bounce */
         }
-        #root { height: 100%; display: flex; flex-direction: column; }
+        #root { 
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+        }
         .font-kids { font-family: 'Fredoka', cursive; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
-        button:active { transform: scale(0.95); transition: 0.1s; }
-        .bg-magic { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* Ensure content doesn't get cut off on small screens */
-        @media (max-height: 600px) {
-            .learning-card { transform: scale(0.9); margin-top: -10px; }
+        /* Smooth scrolling for mobile */
+        .scroll-container {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
+
+        .horizontal-scroll {
+            display: flex;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scroll-snap-type: x mandatory;
+        }
+        
+        .horizontal-scroll > * {
+            scroll-snap-align: start;
+        }
+
+        @keyframes magic-glow {
+            0% { box-shadow: 0 0 10px rgba(99, 102, 241, 0.4); }
+            50% { box-shadow: 0 0 25px rgba(168, 85, 247, 0.7); }
+            100% { box-shadow: 0 0 10px rgba(99, 102, 241, 0.4); }
+        }
+        .magic-active { animation: magic-glow 2s infinite; }
+        
+        .bg-magic { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
     </style>
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@19.0.0",
-    "react-dom": "https://esm.sh/react-dom@19.0.0",
-    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
-    "@google/genai": "https://esm.sh/@google/genai@1.34.0",
+    "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
     "vite": "https://esm.sh/vite@^7.3.0",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
