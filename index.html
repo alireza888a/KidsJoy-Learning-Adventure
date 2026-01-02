@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,8 +7,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="KidsJoy">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#FFD233">
     <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3048/3048122.png">
     <title>KidsJoy Learning Adventure</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
@@ -16,6 +19,8 @@
             --app-yellow: #FFD233;
             --app-purple: #6366F1;
             --app-green: #22C55E;
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
         body {
             font-family: 'Outfit', sans-serif;
@@ -27,10 +32,15 @@
             height: 100%;
             overflow: hidden;
             overscroll-behavior: none;
+            touch-action: manipulation;
+            padding-top: var(--safe-top);
+            padding-bottom: var(--safe-bottom);
         }
         #root {
             height: 100%;
             width: 100%;
+            display: flex;
+            flex-direction: column;
         }
         .font-kids {
             font-family: 'Fredoka', cursive;
@@ -60,6 +70,7 @@
         .scroll-container {
             overflow-y: auto;
             overscroll-behavior-y: contain;
+            height: 100%;
         }
     </style>
 <script type="importmap">
