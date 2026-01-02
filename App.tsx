@@ -14,7 +14,7 @@ const RAINBOW_COLORS = [
 
 const App: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>(() => {
-    const saved = localStorage.getItem('kids_joy_v14_data');
+    const saved = localStorage.getItem('kids_joy_v16_data');
     return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
   });
 
@@ -34,22 +34,30 @@ const App: React.FC = () => {
   const [showAllCats, setShowAllCats] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('kids_joy_v14_data', JSON.stringify(categories));
+    localStorage.setItem('kids_joy_v16_data', JSON.stringify(categories));
   }, [categories]);
 
-  const handleApiError = async (error: any) => {
-    const errStr = String(error).toLowerCase();
-    if (errStr.includes("key") || errStr.includes("401") || errStr.includes("403") || errStr.includes("entity")) {
-      if (window.aistudio) await window.aistudio.openSelectKey();
-    }
-  };
-
-  const ensureKey = async () => {
-    if (window.aistudio) {
-      const has = await window.aistudio.hasSelectedApiKey();
-      if (!has) await window.aistudio.openSelectKey();
+  // اصلاح منطق چک کردن کلید برای کارکرد در هر محیطی
+  const ensureApiKeyIsReady = async () => {
+    if (typeof window !== 'undefined' && (window as any).aistudio) {
+      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+      if (!hasKey) {
+        await (window as any).aistudio.openSelectKey();
+      }
     }
     return true;
+  };
+
+  const handleApiError = async (error: any) => {
+    console.error("API Error Detail:", error);
+    const errStr = String(error).toLowerCase();
+    if (errStr.includes("key") || errStr.includes("401") || errStr.includes("403") || errStr.includes("not found")) {
+      if (typeof window !== 'undefined' && (window as any).aistudio) {
+        await (window as any).aistudio.openSelectKey();
+      } else {
+        alert("Please make sure your API_KEY is set correctly in your hosting environment (like Vercel or Netlify).");
+      }
+    }
   };
 
   useEffect(() => {
@@ -57,7 +65,7 @@ const App: React.FC = () => {
       if (state.view === 'learning_detail' && state.selectedCategory) {
         const item = state.selectedCategory.items[learningIndex];
         if (item) {
-          const cached = await imageStorage.get(`img_v13_${item.id}`);
+          const cached = await imageStorage.get(`img_v16_${item.id}`);
           setItemImage(cached);
         }
       }
@@ -74,10 +82,10 @@ const App: React.FC = () => {
         try {
           const audio = await generateSpeech(text);
           if (audio) { await playTTSSound(audio, text); played = true; }
-        } catch (e) {}
+        } catch (e) { console.warn("Cloud TTS failed, falling back to local"); }
       }
       if (!played) await playLocalSpeech(text);
-    } catch (e) {}
+    } catch (e) { console.error("Speech error:", e); }
     finally { setIsSpeaking(false); }
   };
 
@@ -85,26 +93,26 @@ const App: React.FC = () => {
     e.stopPropagation();
     const item = state.selectedCategory?.items[learningIndex];
     if (isGeneratingImg || !item) return;
-    await ensureKey();
+    
+    await ensureApiKeyIsReady();
     setIsGeneratingImg(true);
     try {
       const url = await generateItemImage(item.name, state.selectedCategory!.name);
       if (url) {
-        await imageStorage.set(`img_v13_${item.id}`, url);
+        await imageStorage.set(`img_v16_${item.id}`, url);
         setItemImage(url);
       }
-    } catch (e) { await handleApiError(e); } 
-    finally { setIsGeneratingImg(false); }
-  };
-
-  const handleSoundBtn = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    handleSpeech(state.selectedCategory?.items[learningIndex]?.name || "");
+    } catch (e) {
+      await handleApiError(e);
+    } finally {
+      setIsGeneratingImg(false);
+    }
   };
 
   const handleExpand = async () => {
     if (isExpanding || !state.selectedCategory) return;
-    await ensureKey();
+    
+    await ensureApiKeyIsReady();
     setIsExpanding(true);
     try {
       const newItems = await expandCategoryItems(state.selectedCategory.name, state.selectedCategory.items);
@@ -116,8 +124,11 @@ const App: React.FC = () => {
         const refreshed = updated.find(cat => cat.id === state.selectedCategory?.id);
         if (refreshed) setState(s => ({ ...s, selectedCategory: refreshed }));
       }
-    } catch (e) { await handleApiError(e); } 
-    finally { setIsExpanding(false); }
+    } catch (e) {
+      await handleApiError(e);
+    } finally {
+      setIsExpanding(false);
+    }
   };
 
   return (
@@ -178,17 +189,19 @@ const App: React.FC = () => {
 
       {state.view === 'learning_detail' && state.selectedCategory && (
         <div className="flex-1 flex flex-col overflow-hidden bg-white pb-[var(--safe-bottom)]">
-          {/* HEADER WITH COUNT */}
-          <div className="bg-[#FFD233] pt-[calc(var(--safe-top)+0.5rem)] pb-3 px-6 rounded-b-[2rem] shadow-sm flex items-center justify-between flex-shrink-0 z-40">
-            <button onClick={() => setState({...state, view: 'main'})} className="bg-white/40 w-10 h-10 rounded-full text-white flex items-center justify-center text-lg shadow-inner btn-tap">🏠</button>
+          {/* HEADER WITH COUNT - REMAINED IN YELLOW SECTION */}
+          <div className="bg-[#FFD233] pt-[calc(var(--safe-top)+0.5rem)] pb-4 px-6 rounded-b-[2.5rem] shadow-sm flex items-center justify-between flex-shrink-0 z-40">
+            <button onClick={() => setState({...state, view: 'main'})} className="bg-white/40 w-11 h-11 rounded-full text-white flex items-center justify-center text-xl shadow-inner btn-tap">🏠</button>
             <div className="flex flex-col items-center">
-              <h1 className="text-lg font-kids text-white uppercase font-bold tracking-widest leading-none">{state.selectedCategory.name}</h1>
-              <p className="text-[10px] font-black text-white/70 uppercase tracking-[0.3em] mt-1">{learningIndex + 1} / {state.selectedCategory.items.length}</p>
+              <h1 className="text-xl font-kids text-white uppercase font-bold tracking-widest leading-none">{state.selectedCategory.name}</h1>
+              <div className="mt-2 bg-white px-5 py-1 rounded-full shadow-inner border border-white/50">
+                <p className="text-[11px] font-black text-indigo-600 uppercase tracking-[0.2em]">{learningIndex + 1} / {state.selectedCategory.items.length}</p>
+              </div>
             </div>
-            <button onClick={() => setShowAllCats(true)} className="bg-white/40 w-10 h-10 rounded-full text-white flex items-center justify-center text-lg shadow-inner btn-tap">📚</button>
+            <button onClick={() => setShowAllCats(true)} className="bg-white/40 w-11 h-11 rounded-full text-white flex items-center justify-center text-xl shadow-inner btn-tap">📚</button>
           </div>
           
-          <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
+          <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 relative">
             {/* CATEGORY STRIP */}
             <div className="flex overflow-x-auto horizontal-scroll hide-scrollbar px-6 py-3 space-x-3 bg-white/80 border-b border-slate-100 flex-shrink-0 z-30">
               {categories.map((c) => (
@@ -197,67 +210,71 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 overflow-hidden">
-              {/* MAIN CONTENT CARD */}
-              <div className="w-full max-w-[340px] flex-1 flex flex-col justify-start relative">
-                
-                {/* ACTION BUTTONS OVERLAYED ON CARD AREA */}
-                <div className="absolute top-4 left-4 z-40">
-                  <button onClick={handleImageGen} className={`w-14 h-14 bg-[#F43F5E] rounded-2xl flex items-center justify-center text-3xl text-white shadow-lg border-2 border-white btn-tap ${isGeneratingImg ? 'animate-spin' : ''}`}>
-                    {isGeneratingImg ? '⏳' : '🎨'}
-                  </button>
-                </div>
-                <div className="absolute top-4 right-4 z-40">
-                  <button onClick={handleSoundBtn} className="w-14 h-14 bg-[#6366F1] rounded-2xl flex items-center justify-center text-3xl text-white shadow-lg border-2 border-white btn-tap">
-                    🔊
-                  </button>
-                </div>
+            <div className="flex-1 flex flex-col items-center justify-center px-4 pt-4 pb-2 overflow-hidden relative">
+              {/* CENTER CARD */}
+              <div className="w-full max-w-[340px] flex-1 flex flex-col justify-center relative px-2">
+                <div onClick={() => setShowPersian(!showPersian)} className={`w-full aspect-square rounded-[4.5rem] shadow-2xl flex flex-col items-center justify-center relative border-[2px] transition-all duration-500 overflow-hidden ${showPersian ? 'bg-indigo-600 border-indigo-400' : 'bg-white border-slate-50'}`}>
+                  
+                  {/* ACTIONS ON TOP CORNERS OF THE IMAGE */}
+                  {!showPersian && (
+                    <>
+                      <button onClick={handleImageGen} className={`absolute top-5 left-5 z-50 w-12 h-12 bg-[#F43F5E] rounded-xl flex items-center justify-center text-2xl text-white shadow-xl border-2 border-white btn-tap ${isGeneratingImg ? 'animate-spin' : ''}`}>
+                        {isGeneratingImg ? '⏳' : '🎨'}
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); handleSpeech(state.selectedCategory?.items[learningIndex]?.name || ""); }} 
+                        className="absolute top-5 right-5 z-50 w-12 h-12 bg-[#6366F1] rounded-xl flex items-center justify-center text-2xl text-white shadow-xl border-2 border-white btn-tap">
+                        🔊
+                      </button>
+                    </>
+                  )}
 
-                {/* THE CARD */}
-                <div onClick={() => setShowPersian(!showPersian)} className={`w-full aspect-square rounded-[5rem] shadow-2xl flex flex-col items-center justify-center relative border-[1px] transition-all duration-500 overflow-hidden ${showPersian ? 'bg-indigo-600 border-indigo-400' : 'bg-white border-slate-100'}`}>
                   {!showPersian ? (
                     <div className="flex flex-col items-center justify-center p-4 w-full h-full">
-                      {/* IMAGE AREA - MAXIMIZED */}
-                      <div className="flex-1 w-full flex items-center justify-center overflow-hidden mb-2 relative">
+                      <div className="flex-1 w-full flex items-center justify-center overflow-hidden mb-2">
                         {itemImage ? (
-                          <img src={itemImage} alt="item" className="w-[92%] h-[92%] object-contain rounded-[3rem] animate-in zoom-in duration-500" />
+                          <img src={itemImage} alt="item" className="w-[98%] h-[98%] object-contain rounded-[3.5rem] animate-in zoom-in duration-500" />
                         ) : (
                           <span className="text-[220px] drop-shadow-2xl animate-bounce-slow leading-none">{state.selectedCategory.items[learningIndex]?.emoji}</span>
                         )}
                       </div>
-                      {/* WORD LABEL - MINIMAL CAPSULE */}
-                      <div className="bg-[#EEF2FF] px-10 py-2 rounded-2xl border border-indigo-100 shadow-sm flex-shrink-0 mb-4">
+                      <div className="bg-[#EEF2FF] px-10 py-2.5 rounded-2xl border border-indigo-100 shadow-sm flex-shrink-0 mb-3">
                         <span className="text-2xl font-kids text-indigo-700 uppercase tracking-widest">{state.selectedCategory.items[learningIndex]?.name}</span>
                       </div>
                     </div>
                   ) : (
                     <div className="text-center p-8 animate-in zoom-in flex flex-col items-center justify-center">
                       <h2 className="text-7xl font-kids text-white mb-6 drop-shadow-lg" dir="rtl">{state.selectedCategory.items[learningIndex]?.persianName}</h2>
-                      <p className="text-[10px] text-white/40 uppercase font-black tracking-[0.4em] mt-8">TAP FOR ENGLISH</p>
+                      <p className="text-sm text-white/40 uppercase font-black tracking-[0.4em] mt-8">TAP FOR ENGLISH</p>
                     </div>
                   )}
                 </div>
 
-                {/* NAVIGATION BUTTONS - COMPACT HANDS */}
-                <div className="flex w-full space-x-6 mt-6 flex-shrink-0 px-8">
-                  <button onClick={() => { setLearningIndex(p => (p > 0 ? p - 1 : state.selectedCategory!.items.length - 1)); setShowPersian(false); }} className="flex-1 bg-white py-4 rounded-[2rem] text-4xl shadow-md active:bg-slate-100 border-b-6 border-slate-100 btn-tap flex items-center justify-center">👈</button>
-                  <button onClick={() => { setLearningIndex(p => (p < state.selectedCategory!.items.length - 1 ? p + 1 : 0)); setShowPersian(false); }} className="flex-1 bg-[#6366F1] py-4 rounded-[2rem] text-white shadow-xl text-4xl active:translate-y-2 border-b-6 border-indigo-900 transition-all btn-tap flex items-center justify-center">👉</button>
+                {/* NAVIGATION BUTTONS - MOVED DOWN, ROUND AND ATTRACTIVE */}
+                <div className="flex items-center justify-between w-full mt-6 px-4">
+                  <button onClick={() => { setLearningIndex(p => (p > 0 ? p - 1 : state.selectedCategory!.items.length - 1)); setShowPersian(false); }} 
+                    className="w-20 h-20 bg-white rounded-full text-5xl flex items-center justify-center shadow-lg border-b-8 border-slate-200 active:translate-y-2 active:border-b-0 transition-all btn-tap">
+                    👈
+                  </button>
+                  <button onClick={() => { setLearningIndex(p => (p < state.selectedCategory!.items.length - 1 ? p + 1 : 0)); setShowPersian(false); }} 
+                    className="w-20 h-20 bg-indigo-600 rounded-full text-5xl flex items-center justify-center shadow-xl border-b-8 border-indigo-900 text-white active:translate-y-2 active:border-b-0 transition-all btn-tap">
+                    👉
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* MAGIC EXPAND BUTTON - SLIM */}
-            <div className="px-10 pb-6 flex-shrink-0 z-30">
-              <button onClick={handleExpand} disabled={isExpanding} className={`w-full py-4 rounded-[2.5rem] font-black text-white shadow-xl transition-all flex items-center justify-center space-x-4 text-sm tracking-widest active:scale-95 ${isExpanding ? 'bg-slate-300' : 'bg-magic magic-btn-active'}`}>
+            {/* MAGIC EXPAND BUTTON */}
+            <div className="px-12 pb-6 mt-2 flex-shrink-0 z-30">
+              <button onClick={handleExpand} disabled={isExpanding} className={`w-full py-5 rounded-[2.5rem] font-black text-white shadow-xl transition-all flex items-center justify-center space-x-4 text-sm tracking-widest active:scale-95 ${isExpanding ? 'bg-slate-300' : 'bg-magic magic-btn-active'}`}>
                 <span className="text-2xl">🪄</span>
-                <span>{isExpanding ? 'MAGIC...' : `GET 10 NEW`}</span>
+                <span>{isExpanding ? 'WORKING MAGIC...' : `GET 10 NEW ITEMS`}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* OTHER VIEWS REMAIN UNCHANGED BUT ARE INCLUDED FOR COMPLETENESS */}
+      {/* OTHER VIEWS REMAIN FOR FULL FUNCTIONALITY */}
       {state.view === 'alphabet' && (
         <div className="flex-1 flex flex-col overflow-hidden pb-[var(--safe-bottom)] bg-slate-50">
           <div className="bg-[#22C55E] pt-[calc(var(--safe-top)+0.5rem)] pb-4 px-6 rounded-b-[3.5rem] shadow-xl flex items-center justify-between flex-shrink-0 z-30">
