@@ -2,24 +2,17 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { Item } from "../types";
 
-export const getFunFact = async (itemName: string, categoryName: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Tell me a very short, simple, and fun fact for a child about "${itemName}" in category "${categoryName}".`,
-  });
-  return response.text || "Learning is fun!";
-};
+const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const expandCategoryItems = async (categoryName: string, existingItems: Item[]): Promise<Item[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  const ai = getAI();
   const existingNames = existingItems.map(i => i.name).join(", ");
   
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: `Generate 10 new English vocabulary items for children in the category "${categoryName}".
     Avoid: [${existingNames}].
-    Return ONLY a raw JSON array of objects: [{"name": "English", "persianName": "Farsi", "emoji": "🍎"}].`,
+    Return ONLY a raw JSON array: [{"name": "English", "persianName": "Farsi", "emoji": "🍎"}].`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -50,7 +43,7 @@ export const expandCategoryItems = async (categoryName: string, existingItems: I
 };
 
 export const generateSpeech = async (text: string): Promise<string | undefined> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
     contents: [{ parts: [{ text: `Say clearly: ${text}` }] }],
@@ -64,24 +57,25 @@ export const generateSpeech = async (text: string): Promise<string | undefined> 
   return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 };
 
-export const generateItemImage = async (itemName: string, categoryName: string): Promise<string | undefined> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-  const prompt = `A vibrant 3D cartoon illustration of a ${itemName} on white background. High quality, cute style for kids.`;
-  
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: { parts: [{ text: prompt }] },
-    config: { 
-      imageConfig: { aspectRatio: "1:1" }
-    }
-  });
+export const generateItemImage = async (itemName: string): Promise<string | undefined> => {
+  const ai = getAI();
+  try {
+    // استفاده از مدل Flash Image که محدودیت‌های Pro را ندارد
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [{ text: `A vibrant 3D Disney style character of a ${itemName}, clean white background, high quality 3D render, cute and cheerful.` }]
+      }
+    });
 
-  if (!response.candidates?.[0]?.content?.parts) return undefined;
-
-  for (const part of response.candidates[0].content.parts) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData) {
+        return part.inlineData.data;
+      }
     }
+  } catch (e) {
+    console.error("Flash Image Gen failed", e);
+    throw e;
   }
   return undefined;
 };

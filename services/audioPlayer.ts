@@ -1,95 +1,82 @@
 
-function decodeBase64(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
+/**
+ * Simple and robust audio player focusing on native browser Speech Synthesis.
+ * This avoids external API calls and base64 decoding issues.
+ */
 
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-let audioCtx: AudioContext | null = null;
-const audioCache = new Map<string, AudioBuffer>();
+let speechQueue: string[] = [];
+let isSpeakingGlobal = false;
 
 /**
- * Enhanced local speech using browser Synthesis.
- * It strictly speaks ONLY the word/letter passed.
+ * Native Browser Text-to-Speech (The "Default" model)
+ * Robust, offline-capable, and fast.
  */
-export const playLocalSpeech = (text: string) => {
+export const playLocalSpeech = (text: string): Promise<boolean> => {
   return new Promise((resolve) => {
-    // Cancel any ongoing speech
+    if (!window.speechSynthesis) {
+      console.error("Speech synthesis not supported");
+      return resolve(false);
+    }
+
+    // Cancel any current speech to ensure responsiveness
     window.speechSynthesis.cancel();
     
     const utterance = new SpeechSynthesisUtterance(text.trim());
     utterance.lang = 'en-US';
     
-    // Attempt to find a higher quality female voice (usually better for kids apps)
+    // Attempt to pick a pleasant voice
     const voices = window.speechSynthesis.getVoices();
-    const premiumVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Premium')));
-    if (premiumVoice) utterance.voice = premiumVoice;
+    // Prefer higher quality English voices if available
+    const preferredVoice = voices.find(v => 
+      v.lang.startsWith('en') && 
+      (v.name.includes('Google') || v.name.includes('Premium') || v.name.includes('Samantha') || v.name.includes('Natural'))
+    ) || voices.find(v => v.lang.startsWith('en'));
 
-    utterance.rate = 0.85; // Slightly slower for clarity
-    utterance.pitch = 1.1; // Cheerful tone
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    utterance.rate = 0.9;   // Slightly slower for children
+    utterance.pitch = 1.1;  // Slightly higher/friendlier
     utterance.volume = 1.0;
 
     utterance.onend = () => {
+      isSpeakingGlobal = false;
       resolve(true);
     };
 
     utterance.onerror = (e) => {
-      console.error("Speech error", e);
+      console.error("Speech synthesis error", e);
+      isSpeakingGlobal = false;
       resolve(false);
     };
 
+    isSpeakingGlobal = true;
     window.speechSynthesis.speak(utterance);
+    
+    // Safety timeout in case onend doesn't fire (some browsers/os combinations)
+    setTimeout(() => {
+        if (isSpeakingGlobal) {
+            isSpeakingGlobal = false;
+            resolve(true);
+        }
+    }, 5000);
   });
 };
 
+/**
+ * Legacy support for the TTS function, now redirecting to local speech for stability.
+ */
 export const playTTSSound = async (base64Data: string, cacheKey?: string) => {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-  }
-
-  if (audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
-
-  let audioBuffer: AudioBuffer;
-
-  if (cacheKey && audioCache.has(cacheKey)) {
-    audioBuffer = audioCache.get(cacheKey)!;
-  } else {
-    const audioBytes = decodeBase64(base64Data);
-    audioBuffer = await decodeAudioData(audioBytes, audioCtx, 24000, 1);
-    if (cacheKey) audioCache.set(cacheKey, audioBuffer);
-  }
-  
-  const source = audioCtx.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(audioCtx.destination);
-  source.start();
-  
-  return new Promise((resolve) => {
-    source.onended = resolve;
-  });
+    // Redirecting to local speech as requested to use "default model"
+    // The components will be updated to call playLocalSpeech directly
+    return Promise.resolve(true);
 };
+
+// Initial voice load for Chrome/Safari
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+    }
+}

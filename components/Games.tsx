@@ -1,23 +1,20 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Category, Item, GameType } from '../types';
-import { getFunFact, generateSpeech } from '../services/geminiService';
-import { playTTSSound, playLocalSpeech } from '../services/audioPlayer';
-import { imageStorage } from '../services/storage';
+import { Category, Item, GameType, AvatarReaction } from '../types';
+import { playLocalSpeech } from '../services/audioPlayer';
 import { CATEGORIES } from '../constants';
 
 interface GameProps {
   category: Category;
   gameType: GameType;
   onBack: () => void;
+  onReaction: (reaction: AvatarReaction) => void;
 }
 
-export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) => {
+export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack, onReaction }) => {
   const [score, setScore] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [funFact, setFunFact] = useState<string>('');
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [imageCache, setImageCache] = useState<Record<string, string>>({});
   
   // Game States
   const [options, setOptions] = useState<Item[]>([]);
@@ -39,34 +36,17 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   // Odd One Out State
   const [oddOptions, setOddOptions] = useState<{emoji: string, isOdd: boolean, id: string}[]>([]);
 
-  // Shuffle items for the whole category once
   const shuffledItems = useMemo(() => [...category.items].sort(() => 0.5 - Math.random()), [category]);
   const currentItem = useMemo(() => shuffledItems[currentIndex] || shuffledItems[0], [currentIndex, shuffledItems]);
-
-  useEffect(() => {
-    const loadImages = async () => {
-      const results = await Promise.all(category.items.map(async it => {
-        const data = await imageStorage.get(`img_v13_${it.id}`);
-        return { id: it.id, data };
-      }));
-      const map: Record<string, string> = {};
-      results.forEach(res => { if (res.data) map[res.id] = res.data; });
-      setImageCache(map);
-    };
-    loadImages();
-  }, [category]);
 
   const handleSpeech = async (text: string) => {
     if (isSpeaking) return;
     setIsSpeaking(true);
     try {
-      let played = false;
-      if (process.env.API_KEY) {
-        const base64 = await generateSpeech(text);
-        if (base64) { await playTTSSound(base64); played = true; }
-      }
-      if (!played) await playLocalSpeech(text);
-    } catch (e) {}
+      await playLocalSpeech(text);
+    } catch (e) {
+      console.error("Speech playback error", e);
+    }
     setIsSpeaking(false);
   };
 
@@ -78,7 +58,6 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
     setGameStatus('neutral');
     
     if (gameType === GameType.FLASHCARDS) {
-      updateFunFact(currentItem.name);
       handleSpeech(currentItem.name);
     } 
     else if (gameType === GameType.QUIZ) {
@@ -100,7 +79,6 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
       setFlippedIndices([]);
     }
     else if (gameType === GameType.MATCHING) {
-      // Pick 3 random DIFFERENT items for each matching round
       const subset = [...category.items].sort(() => 0.5 - Math.random()).slice(0, 3);
       setMatchingImages(subset.map(it => ({ id: it.id, emoji: it.emoji })).sort(() => 0.5 - Math.random()));
       setMatchingWords(subset.map(it => ({ id: it.id, name: it.name })).sort(() => 0.5 - Math.random()));
@@ -109,9 +87,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
       setSelectedWordId(null);
     }
     else if (gameType === GameType.ODD_ONE_OUT) {
-      // Pick 3 random from current category
       const correctOnes = [...category.items].sort(() => 0.5 - Math.random()).slice(0, 3);
-      // Pick 1 from a completely different category
       const otherCats = CATEGORIES.filter(c => c.id !== category.id);
       const randomCat = otherCats[Math.floor(Math.random() * otherCats.length)];
       const oddOne = randomCat.items[Math.floor(Math.random() * randomCat.items.length)];
@@ -124,26 +100,29 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
     }
   };
 
-  const updateFunFact = async (name: string) => {
-    try {
-      const fact = await getFunFact(name, category.name);
-      setFunFact(fact);
-    } catch (e) { setFunFact("Learning is fun!"); }
-  };
-
   const celebrate = (points = 10) => {
     setScore(s => s + points);
     setGameStatus('correct');
+    onReaction('success');
     handleSpeech("Awesome!");
     setTimeout(() => {
       setCurrentIndex((prev) => (prev + 1) % shuffledItems.length);
     }, 1500);
   };
 
-  const renderVisual = (item: Item, size: string = "text-5xl") => {
-    const img = imageCache[item.id];
-    if (img) return <img src={img} className="w-full h-full object-contain rounded-2xl animate-in zoom-in" />;
-    return <span className={`${size} drop-shadow-md leading-none`}>{item.emoji}</span>;
+  const handleWrong = () => {
+    setGameStatus('error');
+    onReaction('thinking');
+    if (navigator.vibrate) navigator.vibrate(100);
+    setTimeout(() => setGameStatus('neutral'), 1000);
+  };
+
+  const VisualAsset = ({ emoji, size = "text-5xl" }: { emoji: string, size?: string }) => {
+    return (
+      <div className="w-full h-full flex items-center justify-center overflow-hidden p-2 select-none">
+        <span className={`${size} drop-shadow-lg`}>{emoji}</span>
+      </div>
+    );
   };
 
   const handleMatch = (type: 'img' | 'word', id: string) => {
@@ -160,15 +139,14 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
         setMatchedPairs(newMatched);
         setSelectedImageId(null);
         setSelectedWordId(null);
+        onReaction('success');
         handleSpeech("Good job!");
         if (newMatched.length === 3) setTimeout(() => celebrate(20), 1000);
       } else {
-        setGameStatus('error');
-        if (navigator.vibrate) navigator.vibrate(100);
+        handleWrong();
         setTimeout(() => {
           setSelectedImageId(null);
           setSelectedWordId(null);
-          setGameStatus('neutral');
         }, 500);
       }
     }
@@ -177,13 +155,12 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   const renderFlashcards = () => (
     <div className="flex flex-col items-center animate-in zoom-in w-full">
       <div className="w-64 h-64 bg-white rounded-[4rem] p-8 shadow-2xl border-b-8 border-slate-100 flex items-center justify-center mb-8">
-        {renderVisual(currentItem, "text-[120px]")}
+        <VisualAsset emoji={currentItem.emoji} size="text-[120px]" />
       </div>
-      <div className="bg-white p-6 rounded-[2.5rem] shadow-xl text-center max-w-xs mb-8 border-b-4 border-slate-50">
-        <h2 className="text-4xl font-kids text-indigo-700 uppercase mb-2">{currentItem.name}</h2>
-        <p className="text-sm text-slate-400 font-bold italic">"{funFact}"</p>
+      <div className="bg-white px-10 py-5 rounded-[2.5rem] shadow-xl text-center mb-8 border-b-4 border-slate-50">
+        <h2 className="text-4xl font-kids text-indigo-700 uppercase tracking-widest">{currentItem.name}</h2>
       </div>
-      <button onClick={() => setCurrentIndex(p => (p + 1) % shuffledItems.length)} className="bg-indigo-600 text-white px-14 py-5 rounded-full font-black text-2xl shadow-xl active:translate-y-2 border-b-8 border-indigo-900 transition-all btn-tap">NEXT!</button>
+      <button onClick={() => { setCurrentIndex(p => (p + 1) % shuffledItems.length); onReaction('idle'); }} className="bg-indigo-600 text-white px-14 py-5 rounded-full font-black text-2xl shadow-xl active:translate-y-2 border-b-8 border-indigo-900 transition-all btn-tap">NEXT!</button>
     </div>
   );
 
@@ -194,9 +171,9 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
       </div>
       <div className="grid grid-cols-2 gap-6 w-full max-w-md">
         {options.map((opt, i) => (
-          <button key={i} onClick={() => opt.id === currentItem.id ? celebrate() : setGameStatus('error')} 
-            className={`aspect-square bg-white rounded-[3rem] shadow-2xl flex items-center justify-center text-8xl border-b-8 border-slate-100 active:scale-95 transition-all ${gameStatus === 'error' && opt.id !== currentItem.id ? 'opacity-20 grayscale' : ''} btn-tap`}>
-            {renderVisual(opt, "text-8xl")}
+          <button key={i} onClick={() => opt.id === currentItem.id ? celebrate() : handleWrong()} 
+            className={`aspect-square bg-white rounded-[3rem] shadow-2xl flex items-center justify-center border-b-8 border-slate-100 active:scale-95 transition-all ${gameStatus === 'error' && opt.id !== currentItem.id ? 'opacity-20 grayscale' : ''} btn-tap`}>
+            <VisualAsset emoji={opt.emoji} size="text-8xl" />
           </button>
         ))}
       </div>
@@ -206,7 +183,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   const renderSpelling = () => (
     <div className="flex flex-col items-center space-y-10 w-full max-w-md animate-in slide-in-from-bottom">
       <div className="w-40 h-40 bg-white rounded-[3rem] p-6 shadow-2xl flex items-center justify-center border-b-8 border-slate-100">
-        {renderVisual(currentItem, "text-8xl")}
+        <VisualAsset emoji={currentItem.emoji} size="text-8xl" />
       </div>
       <div className={`flex flex-wrap justify-center gap-3 min-h-[80px] border-b-4 border-dashed pb-4 w-full ${gameStatus === 'error' ? 'border-red-400' : 'border-indigo-200'}`}>
         {currentItem.name.toUpperCase().split('').map((char, i) => (
@@ -225,9 +202,8 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
               setUserSpelling(next);
               if (next.join('') === target) celebrate();
             } else {
-              setGameStatus('error');
-              if (navigator.vibrate) navigator.vibrate(50);
-              setTimeout(() => { setUserSpelling([]); setGameStatus('neutral'); }, 600);
+              handleWrong();
+              setTimeout(() => { setUserSpelling([]); }, 600);
             }
           }} className="w-16 h-18 bg-white rounded-2xl shadow-xl border-b-8 border-indigo-100 flex items-center justify-center text-3xl font-black text-indigo-700 active:translate-y-1 btn-tap">
             {char}
@@ -253,9 +229,11 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
               newCards[first].matched = true;
               newCards[second].matched = true;
               setScore(s => s + 5);
+              onReaction('success');
               setFlippedIndices([]);
               if (newCards.every(c => c.matched)) setTimeout(initLevel, 1500);
             } else {
+              onReaction('thinking');
               setTimeout(() => {
                 newCards[first].flipped = false;
                 newCards[second].flipped = false;
@@ -265,7 +243,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
             }
           }
         }} className={`aspect-square rounded-[2rem] shadow-xl transition-all duration-500 transform ${card.flipped || card.matched ? 'bg-white rotate-y-180 scale-100' : 'bg-magic scale-95'} btn-tap`}>
-          {(card.flipped || card.matched) ? renderVisual(card.item, "text-5xl") : <span className="text-4xl text-white font-kids">?</span>}
+          {(card.flipped || card.matched) ? <VisualAsset emoji={card.item.emoji} size="text-5xl" /> : <span className="text-4xl text-white font-kids">?</span>}
         </button>
       ))}
     </div>
@@ -276,8 +254,8 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
       <div className="grid grid-cols-3 gap-5">
         {matchingImages.map(it => (
           <button key={it.id} onClick={() => handleMatch('img', it.id)}
-            className={`aspect-square rounded-[2.5rem] shadow-xl border-4 flex items-center justify-center text-6xl transition-all ${matchedPairs.includes(it.id) ? 'bg-green-100 border-green-400 opacity-40 scale-90' : selectedImageId === it.id ? 'bg-indigo-100 border-indigo-500 scale-110 shadow-indigo-200' : 'bg-white border-white'} btn-tap`}>
-            {it.emoji}
+            className={`aspect-square rounded-[2.5rem] shadow-xl border-4 flex items-center justify-center transition-all ${matchedPairs.includes(it.id) ? 'bg-green-100 border-green-400 opacity-40 scale-90' : selectedImageId === it.id ? 'bg-indigo-100 border-indigo-500 scale-110 shadow-indigo-200' : 'bg-white border-white'} btn-tap`}>
+            <VisualAsset emoji={it.emoji} size="text-5xl" />
           </button>
         ))}
       </div>
@@ -299,9 +277,9 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
       </div>
       <div className="grid grid-cols-2 gap-8 w-full">
         {oddOptions.map((opt, i) => (
-          <button key={i} onClick={() => opt.isOdd ? celebrate(15) : setGameStatus('error')}
-            className={`aspect-square bg-white rounded-[3.5rem] shadow-2xl flex items-center justify-center text-[110px] border-b-12 border-slate-100 active:scale-95 transition-all ${gameStatus === 'error' && !opt.isOdd ? 'opacity-20 grayscale' : ''} btn-tap`}>
-            {opt.emoji}
+          <button key={i} onClick={() => opt.isOdd ? celebrate(15) : handleWrong()}
+            className={`aspect-square bg-white rounded-[3.5rem] shadow-2xl flex items-center justify-center border-b-12 border-slate-100 active:scale-95 transition-all ${gameStatus === 'error' && !opt.isOdd ? 'opacity-20 grayscale' : ''} btn-tap`}>
+            <VisualAsset emoji={opt.emoji} size="text-[110px]" />
           </button>
         ))}
       </div>
@@ -309,7 +287,7 @@ export const GameEngine: React.FC<GameProps> = ({ category, gameType, onBack }) 
   );
 
   return (
-    <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden h-full">
+    <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden h-full font-kids">
       <div className="bg-[#FFD233] pt-12 pb-5 px-6 rounded-b-[3.5rem] shadow-xl flex flex-col items-center relative z-20 flex-shrink-0">
         <h1 className="text-2xl font-kids text-white uppercase tracking-widest drop-shadow-md">{gameType}</h1>
         <button onClick={onBack} className="absolute left-6 bottom-4 bg-white/40 w-12 h-12 rounded-full shadow-inner text-white flex items-center justify-center text-2xl active:scale-90">🏠</button>
